@@ -25783,7 +25783,7 @@ async function translate(text){
 async function translateCard(q,qEl,optEls){
   qEl.classList.remove('hidden');qEl.textContent='…';
   try{
-    qEl.textContent=await translate(q.q);
+    qEl.textContent=await translate(primQ(q));
     for(const o of optEls){const tEl=document.createElement('span');tEl.className='trl';tEl.textContent='…';o.el.appendChild(tEl);
       tEl.textContent=await translate(o.text);}
   }catch(e){qEl.textContent='Перевод недоступен (нет интернета).';}
