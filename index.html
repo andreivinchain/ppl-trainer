@@ -141,6 +141,15 @@ kbd{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding
     <div class="stat"><span>Всего ответов</span><b id="stAnswered">0</b></div>
     <div class="stat"><span>Точность</span><b id="stAcc">—</b></div>
   </div>
+  <div class="card" id="bigStats">
+    <div class="muted" style="font-size:13px;margin-bottom:6px">📊 Статистика</div>
+    <div class="stat"><span>⏱ Общее время занятий</span><b id="stTotalTime">—</b></div>
+    <div class="stat"><span>🔮 Прогноз «всё выучено»</span><b id="stEta">—</b></div>
+    <div class="stat" style="border:none;color:var(--mut);font-size:13px;padding-bottom:2px">По разделам:</div>
+    <div class="stat"><span>Air Law</span><b id="stAir" style="font-size:13px;text-align:right">—</b></div>
+    <div class="stat"><span>Human Performance</span><b id="stHp" style="font-size:13px;text-align:right">—</b></div>
+    <div class="muted" style="font-size:11px;margin-top:6px">Прогноз оценивается по вашему темпу и обновляется по мере занятий.</div>
+  </div>
   <div class="card">
     <div class="muted" style="font-size:13px;margin-bottom:4px">Настройки</div>
     <label class="toggle"><span>Авто-переход при верном ответе</span><input type="checkbox" id="setAuto"></label>
@@ -25673,6 +25682,7 @@ const save=(k,v)=>{try{localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
 let S=load(SKEY,{prog:{},mistakes:[],ans:0,correct:0,topic:'both',allPos:{}});
 if(!S.allPos)S.allPos={};
 if(!S.time)S.time={};                 // date -> seconds studied
+if(!S.timeTopic)S.timeTopic={};       // topic -> seconds studied
 if(S.auto===undefined)S.auto=true;    // auto-advance on correct
 if(!S.goal)S.goal=60;                 // daily goal minutes
 if(S.notify===undefined)S.notify=false;
@@ -25709,10 +25719,24 @@ let lastNudge=0;
 function tickTime(){
   if(activeSession && (typeof document==='undefined'||document.visibilityState!=='hidden')){
     S.time[today()]=(S.time[today()]||0)+5;
+    S.timeTopic[S.topic]=(S.timeTopic[S.topic]||0)+5;
     if(S.time[today()]%20===0)persist();
     updateGoal();
     maybeNudge();
   }
+}
+function fmtDur(sec){sec=Math.round(sec||0);const h=Math.floor(sec/3600),m=Math.round(sec%3600/60);if(h>=1)return h+' ч '+(m?m+' мин':'');if(m>=1)return m+' мин';return (sec||0)+' сек';}
+function topicTime(t){ // seconds attributable to a topic (incl. half of "both" sessions)
+  return (S.timeTopic[t]||0)+((S.timeTopic['both']||0)/2);
+}
+function computeStats(){
+  const totalSec=Object.values(S.time).reduce((a,b)=>a+b,0);
+  const bt={'Air Law':{t:0,l:0,p:0},'Human Performance':{t:0,l:0,p:0}};
+  QUESTIONS.forEach(q=>{const b=bt[q.topic];if(!b)return;b.t++;const p=S.prog[q.code];if(p){if(p.streak>=5)b.l++;else if(p.streak>0||p.seen>0)b.p++;}});
+  const learnedAll=bt['Air Law'].l+bt['Human Performance'].l;
+  const remainAll=(bt['Air Law'].t-bt['Air Law'].l)+(bt['Human Performance'].t-bt['Human Performance'].l);
+  let secPer = learnedAll>0 ? totalSec/learnedAll : (S.ans>0? (totalSec/S.ans)*7 : 45); // sec to master one question
+  return {totalSec,bt,learnedAll,remainAll,secPer};
 }
 function updateStreak(){
   // count consecutive days up to today meeting goal
@@ -25761,7 +25785,19 @@ function refreshHome(){
   const pos=S.allPos[S.topic]||0;
   $('allSub').textContent=pos>0?('Продолжить с '+(pos+1)+' из '+P.length):('Пройти все '+P.length+' вопросов подряд');
   updateGoal();
+  renderBigStats();
   $('setAuto').checked=S.auto;$('setGoal').value=S.goal;$('setNotify').checked=S.notify;
+}
+function renderBigStats(){
+  const st=computeStats();
+  $('stTotalTime').textContent=fmtDur(st.totalSec);
+  $('stEta').textContent=st.remainAll===0?'всё выучено 🎉':('≈ '+fmtDur(st.secPer*st.remainAll));
+  ['Air Law','Human Performance'].forEach((tp,i)=>{
+    const b=st.bt[tp], rem=b.t-b.l, id=i?'stHp':'stAir';
+    const eta=rem===0?'готово 🎉':('осталось ≈ '+fmtDur(st.secPer*rem));
+    const tt=topicTime(tp); const tstr=tt>=60?(' · '+fmtDur(tt)):'';
+    $(id).textContent='выучено '+b.l+'/'+b.t+' · '+eta+tstr;
+  });
 }
 $('setAuto').onchange=e=>{S.auto=e.target.checked;persist()};
 $('setGoal').onchange=e=>{let v=parseInt(e.target.value)||60;v=Math.max(5,Math.min(600,v));S.goal=v;e.target.value=v;persist();updateGoal()};
