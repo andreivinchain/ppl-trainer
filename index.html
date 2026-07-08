@@ -25868,12 +25868,6 @@ function renderQ(){
   });
 }
 let curQ=null, autoTimer=null, qStart=0, appear={};
-function reinsert(q,gap){
-  if(mode==='all')return;                     // ordered read-through — don't repeat
-  appear[q.code]=(appear[q.code]||0)+1;
-  if(appear[q.code]>8)return;                  // cap repeats per session
-  queue.splice(Math.min(qi+gap,queue.length),0,q);
-}
 function answer(btn,opt,q){
   if(answered)return;answered=true;curQ=q;
   const correct=opt.c;
@@ -25894,7 +25888,6 @@ function answer(btn,opt,q){
       $('autoMsg').textContent=p.streak===5?'✓ Выучено! 🎉 повтор через 7 дней':('✓ верно · повтор через '+(p.streak>=6?'21':'7')+' дн.');
     }else{
       p.due=now()+dueForStreak(p.streak);
-      reinsert(q,6);
       $('autoMsg').textContent='✓ верно · подряд '+p.streak+'/5';
     }
     persist();
@@ -25903,7 +25896,6 @@ function answer(btn,opt,q){
   }else{
     p.streak=0;p.due=now()+2*MIN;
     if(!S.mistakes.includes(q.code))S.mistakes.push(q.code);
-    reinsert(q,4);
     $('autoMsg').textContent='✗ неверно · счётчик обнулён (0/5)';
     persist();
     $('nextBtn').classList.remove('hidden');
