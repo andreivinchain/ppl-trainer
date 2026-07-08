@@ -25679,6 +25679,8 @@ if(S.notify===undefined)S.notify=false;
 if(!S.streak)S.streak=0;
 if(!S.lastGoalDate)S.lastGoalDate='';
 if(!S.lang)S.lang='en';
+// migrate old level-based progress to streak model (keeps existing progress)
+for(const c in S.prog){const p=S.prog[c];if(p.streak===undefined){p.streak=(p.lvl>=4?5:(p.lvl||0));delete p.lvl;}}
 let TR=load(TKEY,{});
 const persist=()=>{save(SKEY,S);scheduleSync&&scheduleSync()}, persistTr=()=>save(TKEY,TR);
 const primQ=q=>S.lang==='en'?(q.q_en||q.q):q.q;
@@ -25690,12 +25692,13 @@ const langPair=()=>S.lang==='en'?'en|ru':'pl|ru';
 /* ---------- helpers ---------- */
 const $=id=>document.getElementById(id);
 const now=()=>Date.now();
-const DAY=864e5, MIN=6e4;
-const INTERVAL=[0, 5*MIN, 1*DAY, 3*DAY, 7*DAY, 21*DAY]; // by level 0..5
+const DAY=864e5, MIN=6e4, HOUR=36e5;
+// mastery = 5 correct in a row; then 7 days, then 21 days
+function dueForStreak(s){ if(s>=6)return 21*DAY; if(s>=5)return 7*DAY; return [0,10*MIN,1*HOUR,4*HOUR,12*HOUR][s]||10*MIN; }
 function shuffle(a){a=a.slice();for(let i=a.length-1;i>0;i--){const j=Math.random()*(i+1)|0;[a[i],a[j]]=[a[j],a[i]]}return a}
 function pool(){return S.topic==='both'?QUESTIONS:QUESTIONS.filter(q=>q.topic===S.topic)}
-function prog(code){return S.prog[code]||(S.prog[code]={lvl:0,due:0,seen:0})}
-function isLearned(p){return p.lvl>=4}
+function prog(code){return S.prog[code]||(S.prog[code]={streak:0,due:0,seen:0})}
+function isLearned(p){return (p.streak||0)>=5}
 let activeSession=false;
 function show(sec){['home','quiz','exam','examSetup','result','login'].forEach(s=>$(s).classList.add('hidden'));$(sec).classList.remove('hidden');window.scrollTo(0,0);activeSession=(sec==='quiz'||sec==='exam')}
 
@@ -25802,9 +25805,9 @@ function buildMistakeQueue(){
   const set=new Set(S.mistakes);
   return shuffle(QUESTIONS.filter(q=>set.has(q.code)));
 }
-function startLearn(){mode='learn';queue=buildLearnQueue();if(!queue.length){alert('Нет вопросов к повторению — всё выучено!');return}qi=0;show('quiz');renderQ()}
-function startAll(){mode='all';queue=pool().slice().sort((a,b)=>a.code<b.code?-1:1);let st=S.allPos[S.topic]||0;if(st>=queue.length)st=0;qi=st;show('quiz');renderQ()}
-function startMistakes(){mode='mistakes';queue=buildMistakeQueue();if(!queue.length){alert('Список ошибок пуст. Ошибки появляются после неверных ответов.');return}qi=0;show('quiz');renderQ()}
+function startLearn(){mode='learn';appear={};queue=buildLearnQueue();if(!queue.length){alert('Нет вопросов к повторению — всё выучено!');return}qi=0;show('quiz');renderQ()}
+function startAll(){mode='all';appear={};queue=pool().slice().sort((a,b)=>a.code<b.code?-1:1);let st=S.allPos[S.topic]||0;if(st>=queue.length)st=0;qi=st;show('quiz');renderQ()}
+function startMistakes(){mode='mistakes';appear={};queue=buildMistakeQueue();if(!queue.length){alert('Список ошибок пуст. Ошибки появляются после неверных ответов.');return}qi=0;show('quiz');renderQ()}
 
 function renderQ(){
   answered=false;curEl=[];
@@ -25828,13 +25831,17 @@ function renderQ(){
     curEl.push({el:b,c:opt.c,text:primO(opt)});
   });
 }
-let curQ=null, autoTimer=null, qStart=0;
-const GNAME={easy:'Легко',good:'Хорошо',hard:'Трудно'};
-function timeGrade(sec){return sec<5?'easy':sec<10?'good':'hard'}
+let curQ=null, autoTimer=null, qStart=0, appear={};
+function reinsert(q,gap){
+  if(mode==='all')return;                     // ordered read-through — don't repeat
+  appear[q.code]=(appear[q.code]||0)+1;
+  if(appear[q.code]>8)return;                  // cap repeats per session
+  queue.splice(Math.min(qi+gap,queue.length),0,q);
+}
 function answer(btn,opt,q){
   if(answered)return;answered=true;curQ=q;
   const correct=opt.c;
-  prog(q.code).seen++;
+  const p=prog(q.code);p.seen++;
   S.ans++;if(correct)S.correct++;
   curEl.forEach(o=>{
     if(o.c)o.el.classList.add('correct');
@@ -25844,33 +25851,28 @@ function answer(btn,opt,q){
   });
   $('quizBar').style.width=((qi+1)/queue.length*100)+'%';
   if(correct){
-    $('gradeRow').classList.remove('hidden');
-    const sec=(Date.now()-qStart)/1000, g=timeGrade(sec);
-    const gb=$('gradeRow').querySelector('[data-g="'+g+'"]');if(gb)gb.classList.add('pick');
-    if(S.auto){let n=2;
-      const msg=()=>$('autoMsg').textContent='⏱ '+sec.toFixed(1)+' c → '+GNAME[g]+(n>0?' · авто ('+n+')':'');
-      msg();autoTimer=setInterval(()=>{n--;if(n>0)msg();else{clearInterval(autoTimer);grade(g)}},600);
+    p.streak=(p.streak||0)+1;
+    if(p.streak>=5){
+      p.due=now()+(p.streak>=6?21*DAY:7*DAY);
+      const i=S.mistakes.indexOf(q.code);if(i>=0)S.mistakes.splice(i,1);
+      $('autoMsg').textContent=p.streak===5?'✓ Выучено! 🎉 повтор через 7 дней':('✓ верно · повтор через '+(p.streak>=6?'21':'7')+' дн.');
     }else{
-      $('autoMsg').textContent='⏱ '+sec.toFixed(1)+' c → рекомендую: '+GNAME[g];
+      p.due=now()+dueForStreak(p.streak);
+      reinsert(q,6);
+      $('autoMsg').textContent='✓ верно · подряд '+p.streak+'/5';
     }
+    persist();
+    if(S.auto){autoTimer=setTimeout(advanceQuiz,1000);}
+    else $('nextBtn').classList.remove('hidden');
   }else{
-    const p=prog(q.code);p.lvl=0;p.due=now()+INTERVAL[1];
+    p.streak=0;p.due=now()+2*MIN;
     if(!S.mistakes.includes(q.code))S.mistakes.push(q.code);
+    reinsert(q,4);
+    $('autoMsg').textContent='✗ неверно · счётчик обнулён (0/5)';
     persist();
     $('nextBtn').classList.remove('hidden');
   }
 }
-function grade(g){
-  clearInterval(autoTimer);clearTimeout(autoTimer);
-  const q=curQ,p=prog(q.code);
-  if(g==='hard'){p.lvl=Math.max(1,p.lvl);p.due=now()+Math.max(INTERVAL[1],Math.round(INTERVAL[p.lvl]/3))}
-  else if(g==='good'){p.lvl=Math.min(5,p.lvl+1);p.due=now()+INTERVAL[p.lvl]}
-  else{p.lvl=Math.min(5,p.lvl+2);p.due=now()+INTERVAL[p.lvl]}
-  if(mode==='mistakes'){const i=S.mistakes.indexOf(q.code);if(i>=0)S.mistakes.splice(i,1);}
-  else{const i=S.mistakes.indexOf(q.code);if(i>=0&&g!=='hard')S.mistakes.splice(i,1);}
-  persist();advanceQuiz();
-}
-document.querySelectorAll('#gradeRow button').forEach(b=>b.onclick=()=>grade(b.dataset.g));
 function advanceQuiz(){
   clearInterval(autoTimer);
   qi++;
@@ -25942,8 +25944,9 @@ $('exTrBtn').onclick=()=>{const q=exQ[exi];translateCard(q,$('exTr'),exCurEl)};
 function finishExam(){
   if(exTimer)clearInterval(exTimer);
   let ok=0;exAns.forEach(a=>{if(a&&a.ok)ok++;
-    const p=prog(a.code);if(a.ok){p.lvl=Math.min(5,p.lvl+1);p.due=now()+INTERVAL[p.lvl]}
-    else{p.lvl=Math.max(0,p.lvl-1);p.due=now()+INTERVAL[1];if(!S.mistakes.includes(a.code))S.mistakes.push(a.code)}
+    const p=prog(a.code);p.seen=(p.seen||0)+1;
+    if(a&&a.ok){p.streak=(p.streak||0)+1;p.due=now()+dueForStreak(p.streak);if(p.streak>=5){const i=S.mistakes.indexOf(a.code);if(i>=0)S.mistakes.splice(i,1);}}
+    else{p.streak=0;p.due=now()+2*MIN;if(!S.mistakes.includes(a.code))S.mistakes.push(a.code)}
     S.ans++;if(a&&a.ok)S.correct++;
   });
   persist();
