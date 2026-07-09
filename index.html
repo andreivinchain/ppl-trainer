@@ -25882,9 +25882,9 @@ function answer(btn,opt,q){
   $('quizBar').style.width=((qi+1)/queue.length*100)+'%';
   if(correct){
     p.streak=(p.streak||0)+1;
+    const mi=S.mistakes.indexOf(q.code);if(mi>=0)S.mistakes.splice(mi,1); // верный ответ убирает из списка ошибок
     if(p.streak>=5){
       p.due=now()+(p.streak>=6?21*DAY:7*DAY);
-      const i=S.mistakes.indexOf(q.code);if(i>=0)S.mistakes.splice(i,1);
       $('autoMsg').textContent=p.streak===5?'✓ Выучено! 🎉 повтор через 7 дней':('✓ верно · повтор через '+(p.streak>=6?'21':'7')+' дн.');
     }else{
       p.due=now()+dueForStreak(p.streak);
@@ -25973,7 +25973,7 @@ function finishExam(){
   if(exTimer)clearInterval(exTimer);
   let ok=0;exAns.forEach(a=>{if(a&&a.ok)ok++;
     const p=prog(a.code);p.seen=(p.seen||0)+1;
-    if(a&&a.ok){p.streak=(p.streak||0)+1;p.due=now()+dueForStreak(p.streak);if(p.streak>=5){const i=S.mistakes.indexOf(a.code);if(i>=0)S.mistakes.splice(i,1);}}
+    if(a&&a.ok){p.streak=(p.streak||0)+1;p.due=now()+dueForStreak(p.streak);const i=S.mistakes.indexOf(a.code);if(i>=0)S.mistakes.splice(i,1);}
     else{p.streak=0;p.due=now()+2*MIN;if(!S.mistakes.includes(a.code))S.mistakes.push(a.code)}
     S.ans++;if(a&&a.ok)S.correct++;
   });
