@@ -168,6 +168,11 @@ kbd{background:var(--bg2);border:1px solid var(--line);border-radius:6px;padding
     </div>
     <input type="file" id="importFile" accept="application/json" class="hidden">
   </div>
+  <div class="card">
+    <div class="stat" style="border:none"><span>🌐 Переводы офлайн</span><b id="trStatus" style="font-size:12px;font-weight:600;text-align:right">—</b></div>
+    <button class="btn alt" id="prefetchBtn" style="margin:6px 0 0">⬇️ Загрузить переводы для офлайна</button>
+    <div class="muted" style="font-size:11px;margin-top:6px">Один раз с интернетом — дальше перевод работает без сети.</div>
+  </div>
   <button class="btn ghost" id="resetBtn" style="margin-top:10px">Сбросить прогресс</button>
   <div class="note">Прогресс синхронизируется между устройствами после входа.<br>
   Ежечасные напоминания при закрытом приложении iOS не поддерживает — задайте их в «Часы»/«Напоминания» на iPhone.</div>
@@ -25809,15 +25814,43 @@ document.querySelectorAll('#topicSeg button').forEach(b=>b.onclick=()=>{S.topic=
 document.querySelectorAll('#langSeg button').forEach(b=>b.onclick=()=>{S.lang=b.dataset.lang;persist();refreshHome()});
 $('resetBtn').onclick=()=>{if(confirm('Сбросить весь прогресс и статистику?')){S={prog:{},mistakes:[],ans:0,correct:0,topic:S.topic,allPos:{}};persist();refreshHome()}};
 
-/* ---------- translation (MyMemory, on-demand, cached) ---------- */
+/* ---------- translation (cached offline; Google primary, MyMemory fallback) ---------- */
 const EMAIL='krainik.andrei@gmail.com';
+let trDirty=0;
+async function gTrans(text){
+  try{const r=await fetch('https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=ru&dt=t&q='+encodeURIComponent(text));
+    if(!r.ok)return null;const j=await r.json();return j[0].map(x=>x[0]).join('');}catch(e){return null;}
+}
+async function mmTrans(text){
+  try{const r=await fetch('https://api.mymemory.translated.net/get?q='+encodeURIComponent(text)+'&langpair='+langPair()+'&de='+EMAIL);
+    const j=await r.json();return (j&&j.responseData&&j.responseData.translatedText)||null;}catch(e){return null;}
+}
 async function translate(text){
-  if(TR[text])return TR[text];
-  const url='https://api.mymemory.translated.net/get?q='+encodeURIComponent(text)+'&langpair='+langPair()+'&de='+EMAIL;
-  const r=await fetch(url);const j=await r.json();
-  let t=(j&&j.responseData&&j.responseData.translatedText)||'';
-  if(t){TR[text]=t;persistTr()}
+  if(!text)return'';
+  if(TR[text])return TR[text];            // cached -> instant & offline
+  let t=await gTrans(text); if(!t)t=await mmTrans(text);
+  if(t){TR[text]=t; if(++trDirty%15===0)persistTr();}
   return t||'(перевод недоступен)';
+}
+/* ---- one-time background prefetch so translations work fully offline ---- */
+let prefetchRunning=false;
+function setTrStatus(s){ const e=$('trStatus'); if(e)e.textContent=s; }
+async function prefetchTranslations(manual){
+  if(prefetchRunning)return;
+  const need=[],seen=new Set();
+  QUESTIONS.forEach(q=>{const a=primQ(q);if(a&&!TR[a]&&!seen.has(a)){seen.add(a);need.push(a);}
+    q.options.forEach(o=>{const b=primO(o);if(b&&!TR[b]&&!seen.has(b)){seen.add(b);need.push(b);}});});
+  if(!need.length){setTrStatus('офлайн-переводы готовы ✓');return;}
+  if(!manual && !(navigator.onLine!==false))return;
+  prefetchRunning=true;
+  let done=0;const total=need.length,CONC=6;let idx=0;
+  setTrStatus('Загрузка переводов для офлайна… 0%');
+  async function worker(){while(idx<need.length){const s=need[idx++];await translate(s);done++;
+    if(done%20===0)setTrStatus('Загрузка переводов для офлайна… '+Math.round(done/total*100)+'%');}}
+  await Promise.all(Array.from({length:CONC},worker));
+  persistTr();
+  setTrStatus('офлайн-переводы готовы ✓');
+  prefetchRunning=false;
 }
 async function translateCard(q,qEl,optEls){
   qEl.classList.remove('hidden');qEl.textContent='…';
@@ -25825,6 +25858,7 @@ async function translateCard(q,qEl,optEls){
     qEl.textContent=await translate(primQ(q));
     for(const o of optEls){const tEl=document.createElement('span');tEl.className='trl';tEl.textContent='…';o.el.appendChild(tEl);
       tEl.textContent=await translate(o.text);}
+    persistTr();
   }catch(e){qEl.textContent='Перевод недоступен (нет интернета).';}
 }
 
@@ -26096,8 +26130,16 @@ $('importFile').onchange=e=>{
 /* ---------- PWA offline / installable ---------- */
 if('serviceWorker' in navigator){ window.addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{})); }
 
+/* ---------- offline translations prefetch ---------- */
+$('prefetchBtn').onclick=()=>prefetchTranslations(true);
+function trCount(){let n=0,t=0;const seen=new Set();QUESTIONS.forEach(q=>{[primQ(q),...q.options.map(primO)].forEach(s=>{if(s&&!seen.has(s)){seen.add(s);t++;if(TR[s])n++;}})});return{n,t};}
+function refreshTrStatus(){const c=trCount();setTrStatus(c.n>=c.t?'готово ✓ ('+c.t+')':(c.n+'/'+c.t+' загружено'));}
+// auto-prefetch in background a few seconds after load, if online
+setTimeout(()=>{ if(navigator.onLine!==false) prefetchTranslations(false).then(refreshTrStatus); refreshTrStatus(); }, 4000);
+
 updateAccountUI();
 refreshHome();
+refreshTrStatus();
 </script>
 </body>
 </html>
